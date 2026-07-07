@@ -4,7 +4,7 @@
   "description": "The companion CLI for the SaaS boilerplate: scaffold a new project, check your Supabase setup (RLS included), and generate RLS-safe migrations.",
   "type": "module",
   "bin": {
-    "saas-kit": "./bin/cli.mjs"
+    "saas-kit": "bin/cli.mjs"
   },
   "files": [
     "bin",
