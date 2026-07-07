@@ -1,0 +1,43 @@
+{
+  "name": "saas-kit",
+  "version": "0.1.0",
+  "description": "The companion CLI for the SaaS boilerplate: scaffold a new project, check your Supabase setup (RLS included), and generate RLS-safe migrations.",
+  "type": "module",
+  "bin": {
+    "saas-kit": "./bin/cli.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "templates",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node bin/cli.mjs",
+    "test": "node --test"
+  },
+  "keywords": [
+    "supabase",
+    "nextjs",
+    "saas",
+    "boilerplate",
+    "scaffold",
+    "rls",
+    "cli",
+    "migrations"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "author": "Mateus Zingano",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mateuszingano/saas-kit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mateuszingano/saas-kit/issues"
+  },
+  "homepage": "https://github.com/mateuszingano/saas-kit#readme",
+  "license": "MIT"
+}
