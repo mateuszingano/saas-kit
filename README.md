@@ -4,10 +4,12 @@ Four commands that make the boilerplate a one-liner to start, verify, grow, and
 ship — so the safe path (RLS on, env wired right, checks green) is the default.
 
 ```bash
-npx saas-kit new my-app                                 # scaffold (free starter)
-npx saas-kit doctor                                     # env + Supabase + RLS
-npx saas-kit gen:migration add_projects                 # RLS-safe migration
-npx saas-kit check                                       # pre-deploy gate
+npm install -g @mateuszingano/saas-kit   # or prefix each command with: npx @mateuszingano/saas-kit
+
+saas-kit new my-app              # scaffold (free starter)
+saas-kit doctor                  # env + Supabase + RLS
+saas-kit gen:migration add_projects   # RLS-safe migration
+saas-kit check                   # pre-deploy gate
 ```
 
 ## Commands
