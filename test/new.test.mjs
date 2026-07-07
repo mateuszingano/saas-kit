@@ -9,7 +9,7 @@ import {
   resolveSource,
   scaffoldLocal,
   scaffoldRepo,
-  scaffold,
+  DEFAULT_TEMPLATE,
 } from '../src/new.mjs';
 
 test('ignoreEntry skips build artifacts and secrets, keeps source', () => {
@@ -34,15 +34,16 @@ test('resolveSource: env template detects git url vs local path', () => {
   assert.equal(resolveSource({}, { SAAS_KIT_TEMPLATE: './local' }).kind, 'local');
 });
 
-test('resolveSource: nothing configured returns none', () => {
-  assert.equal(resolveSource({}, {}).kind, 'none');
+test('resolveSource: nothing configured defaults to the free public starter', () => {
+  const s = resolveSource({}, {});
+  assert.equal(s.kind, 'repo');
+  assert.equal(s.value, DEFAULT_TEMPLATE);
+  assert.match(s.value, /nextjs-supabase-starter/);
 });
 
-test('scaffold with no source throws a helpful error', () => {
-  assert.throws(
-    () => scaffold({ name: 'x', dest: join(tmpdir(), 'nope'), flags: {}, env: {} }),
-    /no template source/
-  );
+test('resolveSource: explicit --from/--repo override the default', () => {
+  assert.equal(resolveSource({ from: 'dir' }).kind, 'local');
+  assert.equal(resolveSource({ repo: 'x.git' }).value, 'x.git');
 });
 
 test('scaffoldLocal copies source, drops ignored, renames, seeds .env', () => {

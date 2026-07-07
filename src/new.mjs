@@ -1,11 +1,14 @@
-// new — scaffold a fresh project from the boilerplate. Works two ways:
+// new — scaffold a fresh project from a template. Works three ways:
+//   (default)      clone the free public starter (DEFAULT_TEMPLATE below)
 //   --from <dir>   copy a local template (offline; used in dev/tests)
-//   --repo <url>   git clone a template (public OR private — uses the caller's
-//                  git credentials, so a buyer invited to the private repo can
-//                  scaffold straight from it)
-// There is deliberately NO magic default pointing at the paid private repo:
-// a free CLI must not hand out the paid boilerplate. Source is always explicit
-// (flag or SAAS_KIT_TEMPLATE env).
+//   --repo <url>   git clone any template (public OR private — uses the caller's
+//                  git credentials, so a buyer invited to the paid private repo
+//                  can scaffold straight from it)
+// The default is the FREE starter, never the paid boilerplate — a free CLI must
+// not hand out a paid repo. Point --repo at the paid one when you own it.
+
+// The free, public top-of-funnel starter. Cloning this is the zero-arg path.
+export const DEFAULT_TEMPLATE = 'https://github.com/mateuszingano/nextjs-supabase-starter.git';
 
 import {
   cpSync,
@@ -56,7 +59,8 @@ export function resolveSource(flags = {}, env = {}) {
     const looksGit = /^https?:\/\/|^git@|\.git$/.test(tmpl);
     return { kind: looksGit ? 'repo' : 'local', value: tmpl };
   }
-  return { kind: 'none' };
+  // No explicit source → default to the free public starter.
+  return { kind: 'repo', value: DEFAULT_TEMPLATE };
 }
 
 /** Post-clone/copy cleanup: strip .git, rename package, seed .env. */

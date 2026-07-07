@@ -16,19 +16,21 @@ import { runCheck } from '../src/check.mjs';
 const HELP = `saas-kit — companion CLI for the SaaS boilerplate
 
 Usage:
-  saas-kit new <name> (--repo <url> | --from <dir>)   Scaffold a new project
+  saas-kit new <name> [--repo <url> | --from <dir>]   Scaffold a new project
   saas-kit doctor [--env <path>]                      Check env, Supabase, RLS
   saas-kit gen:migration <name>                       Create an RLS-safe migration
   saas-kit check [--skip-e2e]                         Run the pre-deploy gate
   saas-kit --help                                     Show this help
 
-Template source for \`new\` (a free CLI ships no default paid repo):
-  --repo <git-url>   clone a repo (public or private — uses your git auth)
+Template source for \`new\` (defaults to the free public starter):
+  (default)          the free nextjs-supabase-starter
+  --repo <git-url>   clone another repo (public or private — uses your git auth)
   --from <dir>       copy a local template
   or set SAAS_KIT_TEMPLATE
 
 Examples:
-  saas-kit new my-app --repo https://github.com/you/your-boilerplate.git
+  saas-kit new my-app                       # from the free starter
+  saas-kit new my-app --repo <paid-repo>    # from the paid boilerplate you own
   saas-kit gen:migration add_projects
   SUPABASE_DB_URL=postgres://... saas-kit check
 `;

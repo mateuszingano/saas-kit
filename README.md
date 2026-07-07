@@ -4,7 +4,7 @@ Four commands that make the boilerplate a one-liner to start, verify, grow, and
 ship — so the safe path (RLS on, env wired right, checks green) is the default.
 
 ```bash
-npx saas-kit new my-app --repo <your-boilerplate.git>   # scaffold
+npx saas-kit new my-app                                 # scaffold (free starter)
 npx saas-kit doctor                                     # env + Supabase + RLS
 npx saas-kit gen:migration add_projects                 # RLS-safe migration
 npx saas-kit check                                       # pre-deploy gate
@@ -17,13 +17,15 @@ Scaffolds a fresh project: clones/copies the template, strips `.git`, renames
 `package.json`, and seeds `.env` from `.env.example` — the first thing you do is
 run, not hunt for what to fill.
 
-- `--repo <git-url>` — clones any repo, **public or private** (uses your git
-  credentials, so a buyer invited to the private boilerplate scaffolds from it).
+- **(default)** — clones the free public
+  [nextjs-supabase-starter](https://github.com/mateuszingano/nextjs-supabase-starter).
+- `--repo <git-url>` — clones another repo, **public or private** (uses your git
+  credentials, so a buyer who owns the paid boilerplate scaffolds from it).
 - `--from <dir>` — copies a local template (offline).
 - or set `SAAS_KIT_TEMPLATE`.
 
-There's **no built-in default repo** on purpose: a free CLI must not hand out a
-paid boilerplate. You always name the source.
+The default is the **free** starter, never a paid repo — a free CLI shouldn't
+hand out a paid boilerplate. Point `--repo` at the paid one when you own it.
 
 ### `doctor [--env <path>]`
 Answers "is this wired up right?" without deploying to find out:
