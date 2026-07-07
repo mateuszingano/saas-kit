@@ -9,13 +9,13 @@
   "files": [
     "bin",
     "src",
-    "templates",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "start": "node bin/cli.mjs",
-    "test": "node --test"
+    "test": "node --test",
+    "prepublishOnly": "node --test"
   },
   "keywords": [
     "supabase",
