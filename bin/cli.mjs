@@ -9,7 +9,7 @@ import { resolve, join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { parseArgs } from '../src/args.mjs';
 import { genMigration } from '../src/gen-migration.mjs';
-import { scaffold } from '../src/new.mjs';
+import { scaffold, validateProjectName } from '../src/new.mjs';
 import { loadEnv, checkEnv } from '../src/doctor.mjs';
 import { runCheck } from '../src/check.mjs';
 
@@ -77,8 +77,11 @@ async function cmdDoctor(flags) {
 }
 
 function cmdNew(positional, flags) {
-  const name = positional[0];
-  if (!name) throw new Error('usage: saas-kit new <name> (--repo <url> | --from <dir>)');
+  const raw = positional[0];
+  if (!raw) throw new Error('usage: saas-kit new <name> (--repo <url> | --from <dir>)');
+  // Validate/normalize the project name BEFORE any clone or disk write, so an
+  // invalid name fails fast instead of leaving a half-cloned directory behind.
+  const name = validateProjectName(raw);
   const dest = resolve(process.cwd(), name);
   scaffold({ name, dest, flags, env: process.env });
   console.log(`\n✔ Scaffolded ${name} at ${dest}`);

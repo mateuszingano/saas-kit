@@ -18,3 +18,30 @@ test('parseArgs: a flag followed by another flag is boolean', () => {
   assert.equal(flags.help, true);
   assert.equal(flags.from, 'dir');
 });
+
+test('parseArgs accepts --key=value (glued with =)', () => {
+  const { flags, positional } = parseArgs(['new', '--repo=x.git', '--from=./tmpl']);
+  assert.equal(flags.repo, 'x.git');
+  assert.equal(flags.from, './tmpl');
+  assert.deepEqual(positional, ['new']);
+});
+
+test('parseArgs: --key=value keeps a value that itself contains =', () => {
+  const { flags } = parseArgs(['--repo=https://h/r.git?ref=main']);
+  assert.equal(flags.repo, 'https://h/r.git?ref=main');
+});
+
+test('parseArgs: --key=value tolerates an empty value', () => {
+  const { flags } = parseArgs(['--body=']);
+  assert.equal(flags.body, '');
+});
+
+test('parseArgs: a value that starts with a single dash is taken as the value', () => {
+  const { flags } = parseArgs(['--repo', '-weird-name']);
+  assert.equal(flags.repo, '-weird-name');
+});
+
+test('parseArgs: --key=-value keeps a dash-leading value glued with =', () => {
+  const { flags } = parseArgs(['--tag=-rc1']);
+  assert.equal(flags.tag, '-rc1');
+});

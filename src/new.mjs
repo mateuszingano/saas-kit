@@ -38,6 +38,32 @@ export function ignoreEntry(name) {
   return IGNORE.has(name);
 }
 
+/**
+ * Validate a project/package name against npm's rules, before we touch the disk.
+ * Returns the trimmed name on success; throws a clear error otherwise. Kept
+ * conservative on purpose (this becomes both the directory and package.json
+ * "name"): lowercase, url/path-safe, no leading dot/underscore, <=214 chars.
+ */
+export function validateProjectName(raw) {
+  const name = String(raw ?? '').trim();
+  if (!name) throw new Error('project name is required');
+  if (name.length > 214) throw new Error('project name must be 214 characters or fewer');
+  if (name !== name.toLowerCase()) throw new Error(`project name must be lowercase: "${name}"`);
+  if (name.startsWith('.') || name.startsWith('_')) {
+    throw new Error('project name cannot start with a dot or underscore');
+  }
+  if (/[\\/]/.test(name)) throw new Error('project name cannot contain path separators');
+  // npm-safe unscoped name: letters, digits, and - _ . only. (No scopes here —
+  // the name is also a directory, so we keep it to a single plain segment.)
+  if (!/^[a-z0-9][a-z0-9._-]*$/.test(name)) {
+    throw new Error(
+      `invalid project name: "${name}". Use lowercase letters, digits, and - _ . ` +
+        '(start with a letter or digit).'
+    );
+  }
+  return name;
+}
+
 /** Set the "name" field of a package.json string to `name`, reset version. */
 export function renamePackage(pkgJson, name) {
   const pkg = JSON.parse(pkgJson);
@@ -49,7 +75,8 @@ export function renamePackage(pkgJson, name) {
 /**
  * Pure: decide where the template comes from, from flags + env.
  * A value that looks like a git URL is treated as a repo, otherwise local dir.
- * Returns { kind: 'local' | 'repo' | 'none', value }.
+ * Returns { kind: 'local' | 'repo', value }. There is always a source: with no
+ * flags or env it defaults to the free public starter, so 'none' never happens.
  */
 export function resolveSource(flags = {}, env = {}) {
   if (typeof flags.from === 'string') return { kind: 'local', value: flags.from };
@@ -118,16 +145,11 @@ function defaultClone(repo, dest) {
 
 /**
  * Top-level scaffold: resolves the source and dispatches. `dest` is absolute.
- * Throws a helpful error when no source is configured.
+ * `resolveSource` always yields a source (defaults to the free starter), so
+ * there is no "no source" branch to handle here.
  */
 export function scaffold({ name, dest, flags = {}, env = {}, clone }) {
   const source = resolveSource(flags, env);
-  if (source.kind === 'none') {
-    throw new Error(
-      'no template source. Pass --repo <git-url> or --from <dir>,\n' +
-        '  or set SAAS_KIT_TEMPLATE. (A free CLI ships no default paid repo.)'
-    );
-  }
   if (source.kind === 'local') {
     return scaffoldLocal({ name, from: resolve(source.value), dest });
   }

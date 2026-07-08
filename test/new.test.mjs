@@ -9,8 +9,33 @@ import {
   resolveSource,
   scaffoldLocal,
   scaffoldRepo,
+  validateProjectName,
   DEFAULT_TEMPLATE,
 } from '../src/new.mjs';
+
+test('validateProjectName accepts a clean npm-safe name', () => {
+  assert.equal(validateProjectName('my-app'), 'my-app');
+  assert.equal(validateProjectName('  my.app_2  '), 'my.app_2'); // trims
+});
+
+test('validateProjectName rejects empty, uppercase, and leading dot/underscore', () => {
+  assert.throws(() => validateProjectName(''), /required/);
+  assert.throws(() => validateProjectName('   '), /required/);
+  assert.throws(() => validateProjectName('MyApp'), /lowercase/);
+  assert.throws(() => validateProjectName('.hidden'), /dot or underscore/);
+  assert.throws(() => validateProjectName('_priv'), /dot or underscore/);
+});
+
+test('validateProjectName rejects path separators and illegal characters', () => {
+  assert.throws(() => validateProjectName('a/b'), /path separator/);
+  assert.throws(() => validateProjectName('a\\b'), /path separator/);
+  assert.throws(() => validateProjectName('my app'), /invalid project name/);
+  assert.throws(() => validateProjectName('my@app'), /invalid project name/);
+});
+
+test('validateProjectName rejects names longer than 214 chars', () => {
+  assert.throws(() => validateProjectName('a'.repeat(215)), /214/);
+});
 
 test('ignoreEntry skips build artifacts and secrets, keeps source', () => {
   assert.equal(ignoreEntry('node_modules'), true);
