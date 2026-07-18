@@ -36,7 +36,10 @@ Answers "is this wired up right?" without deploying to find out:
 - pings Supabase over REST to confirm it's reachable;
 - points you at [Airlock](https://www.npmjs.com/package/airlock-rls) for a real RLS audit.
 
-Exits non-zero when required vars are missing — safe to drop in CI.
+Exits non-zero when required vars are missing **or** when the env is filled but
+Supabase can't be reached (unreachable host, wrong URL, network down) — so a
+broken connection fails CI, it doesn't pass silently. The probe is skipped
+(exit 0) only when the env isn't filled in yet.
 
 ### `gen:migration <name>`
 Creates `supabase/migrations/<timestamp>_<slug>.sql` pre-filled with the
@@ -50,6 +53,13 @@ The pre-deploy gate. Runs the quality steps the project ships — `typecheck`,
 RLS audit via Airlock when `SUPABASE_DB_URL` is set. One command answers "is
 this safe to ship?" instead of remembering four. Non-zero on any failure.
 
+The RLS audit only runs when **`airlock-rls` is already installed locally** (it's
+resolved with `npx --no-install`, never auto-downloaded from the registry — that
+would make a hijacked package name into remote code execution). If it isn't
+installed, the audit step is **skipped with a note** rather than failing the
+gate; install `airlock-rls`, or run `npx airlock-rls "$SUPABASE_DB_URL"`
+yourself, to include it.
+
 ## Why it's free
 This CLI is the front door to the boilerplate. It's MIT and standalone; the paid
 products are the boilerplate it scaffolds, the Pro tier, and Airlock for
@@ -57,7 +67,7 @@ continuous RLS monitoring. Use it on anything.
 
 ## Develop
 ```bash
-npm test          # 48 tests, offline
+npm test          # 52 tests, offline
 node bin/cli.mjs --help
 ```
 

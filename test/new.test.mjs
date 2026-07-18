@@ -10,6 +10,7 @@ import {
   scaffoldLocal,
   scaffoldRepo,
   validateProjectName,
+  validateRepo,
   DEFAULT_TEMPLATE,
 } from '../src/new.mjs';
 
@@ -116,10 +117,61 @@ test('scaffoldRepo finalizes: strips .git, renames (clone injected)', () => {
     mkdirSync(join(target, '.git'), { recursive: true });
     writeFileSync(join(target, 'package.json'), '{"name":"tmpl","version":"2.0.0"}');
   };
-  scaffoldRepo({ name: 'cloned', repo: 'x.git', dest, clone: fakeClone });
+  scaffoldRepo({ name: 'cloned', repo: 'https://example.test/x.git', dest, clone: fakeClone });
 
   assert.ok(!existsSync(join(dest, '.git')), 'strips .git after clone');
   assert.equal(JSON.parse(readFileSync(join(dest, 'package.json'), 'utf8')).name, 'cloned');
+});
+
+test('validateRepo accepts https, git@ and relative local sources', () => {
+  assert.equal(validateRepo('https://github.com/o/r.git'), 'https://github.com/o/r.git');
+  assert.equal(validateRepo('  http://h/r.git  '), 'http://h/r.git'); // trims
+  assert.equal(validateRepo('git@github.com:o/r.git'), 'git@github.com:o/r.git');
+  assert.equal(validateRepo('./local-template'), './local-template');
+  assert.equal(validateRepo('../sibling'), '../sibling');
+});
+
+test('validateRepo rejects flag-like and unrecognized sources', () => {
+  assert.throws(() => validateRepo('--upload-pack=touch /tmp/pwned'), /cannot start with/);
+  assert.throws(() => validateRepo('-x'), /cannot start with/);
+  assert.throws(() => validateRepo('ftp://evil/r.git'), /invalid --repo/);
+  assert.throws(() => validateRepo('x.git'), /invalid --repo/);
+  assert.throws(() => validateRepo(''), /required/);
+  assert.throws(() => validateRepo('   '), /required/);
+});
+
+test('scaffoldRepo rejects an arg-injection --repo and NEVER runs the clone', () => {
+  const root = mkdtempSync(join(tmpdir(), 'saaskit-'));
+  const dest = join(root, 'evil');
+  let called = false;
+  const spyClone = () => {
+    called = true;
+  };
+  assert.throws(
+    () =>
+      scaffoldRepo({
+        name: 'evil',
+        repo: '--upload-pack=touch /tmp/pwned',
+        dest,
+        clone: spyClone,
+      }),
+    /invalid --repo/
+  );
+  assert.equal(called, false, 'clone must not run for a flag-like repo');
+  assert.ok(!existsSync(dest), 'no directory created for a rejected repo');
+});
+
+test('scaffoldRepo accepts a valid https repo and passes it to the clone', () => {
+  const root = mkdtempSync(join(tmpdir(), 'saaskit-'));
+  const dest = join(root, 'ok');
+  let seen = null;
+  const fakeClone = (repo, target) => {
+    seen = repo;
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(target, 'package.json'), '{"name":"tmpl","version":"1.0.0"}');
+  };
+  scaffoldRepo({ name: 'ok', repo: 'https://example.test/r.git', dest, clone: fakeClone });
+  assert.equal(seen, 'https://example.test/r.git', 'clone ran with the validated url');
 });
 
 test('scaffold refuses to overwrite an existing directory', () => {

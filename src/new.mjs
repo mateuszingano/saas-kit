@@ -128,18 +128,52 @@ export function scaffoldLocal({ name, from, dest }) {
   return finalize(dest, name);
 }
 
+/**
+ * Validate a template repo source BEFORE it reaches `git clone`, and return the
+ * trimmed value. Two dangers to shut down:
+ *   1. Argument injection — a repo that starts with `-` (e.g.
+ *      `--upload-pack=touch /tmp/pwned`) is read by git as a FLAG, not a URL,
+ *      turning `git clone` into remote code execution. We reject any leading `-`.
+ *   2. Unexpected sources — we only accept the forms we actually mean to clone:
+ *      http(s) URLs, scp-like `git@host:...`, or a relative local path
+ *      (`./` / `../`). Anything else is rejected with a clear error.
+ * The clone itself also passes `--` before the repo (defense in depth), so even
+ * a value that slipped past here can never be parsed as an option by git.
+ */
+export function validateRepo(raw) {
+  const value = String(raw ?? '').trim();
+  if (!value) throw new Error('template repo is required');
+  if (value.startsWith('-')) {
+    throw new Error(
+      `invalid --repo: "${value}" cannot start with "-" (git would read it as a flag).`
+    );
+  }
+  if (!/^(https?:\/\/|git@|\.\/|\.\.\/)/.test(value)) {
+    throw new Error(
+      `invalid --repo: "${value}". Use an https:// URL, a git@host:path URL, ` +
+        'or a ./relative local path.'
+    );
+  }
+  return value;
+}
+
 /** Shallow git clone a template repo into dest, then finalize. */
 export function scaffoldRepo({ name, repo, dest, clone = defaultClone }) {
   if (!name) throw new Error('usage: saas-kit new <name>');
+  // Validate the source BEFORE we touch git or the disk, so a hostile --repo
+  // fails fast and the clone never runs.
+  const safeRepo = validateRepo(repo);
   if (existsSync(dest)) throw new Error(`refusing to overwrite existing directory: ${dest}`);
-  clone(repo, dest);
+  clone(safeRepo, dest);
   return finalize(dest, name);
 }
 
-// Real clone (injectable so tests don't hit the network).
+// Real clone (injectable so tests don't hit the network). The `--` separator
+// ends git's option parsing, so `repo`/`dest` are always treated as operands,
+// never as flags — the arg-injection belt-and-suspenders alongside validateRepo.
 function defaultClone(repo, dest) {
   try {
-    execFileSync('git', ['clone', '--depth', '1', repo, dest], { stdio: 'pipe' });
+    execFileSync('git', ['clone', '--depth', '1', '--', repo, dest], { stdio: 'pipe' });
   } catch (err) {
     const detail = err.stderr ? err.stderr.toString().trim() : err.message;
     throw new Error(`git clone failed for ${repo}\n  ${detail}`);
