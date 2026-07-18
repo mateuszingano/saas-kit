@@ -45,3 +45,18 @@ test('parseArgs: --key=-value keeps a dash-leading value glued with =', () => {
   const { flags } = parseArgs(['--tag=-rc1']);
   assert.equal(flags.tag, '-rc1');
 });
+
+test('parseArgs: a value-required flag with no value throws (not silent true)', () => {
+  const opts = { valueFlags: ['repo', 'from'] };
+  // bare flag at end of argv
+  assert.throws(() => parseArgs(['new', 'app', '--repo'], opts), /--repo needs a value/);
+  // followed by another flag
+  assert.throws(() => parseArgs(['new', 'app', '--from', '--repo', 'x'], opts), /--from needs a value/);
+  // empty glued value
+  assert.throws(() => parseArgs(['new', 'app', '--repo='], opts), /--repo needs a value/);
+});
+
+test('parseArgs: value-required flag with a real value still parses', () => {
+  const { flags } = parseArgs(['new', 'app', '--repo', 'x.git'], { valueFlags: ['repo', 'from'] });
+  assert.equal(flags.repo, 'x.git');
+});

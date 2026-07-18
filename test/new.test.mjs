@@ -90,6 +90,24 @@ test('scaffoldLocal copies source, drops ignored, renames, seeds .env', () => {
   assert.equal(readFileSync(join(dest, '.env'), 'utf8'), 'KEY=', 'seeds .env from example');
 });
 
+test('scaffoldLocal drops NESTED secrets and vcs dirs, not just top-level', () => {
+  const root = mkdtempSync(join(tmpdir(), 'saaskit-'));
+  const from = join(root, 'template');
+  mkdirSync(join(from, 'sub'), { recursive: true });
+  mkdirSync(join(from, 'sub', '.git'), { recursive: true });
+  writeFileSync(join(from, 'package.json'), '{"name":"tmpl","version":"1.0.0"}');
+  writeFileSync(join(from, 'sub', 'keep.ts'), 'export {}');
+  writeFileSync(join(from, 'sub', '.env'), 'SECRET=1');
+  writeFileSync(join(from, 'sub', '.git', 'config'), '[core]');
+
+  const dest = join(root, 'my-app');
+  scaffoldLocal({ name: 'my-app', from, dest });
+
+  assert.ok(existsSync(join(dest, 'sub', 'keep.ts')), 'keeps nested source');
+  assert.ok(!existsSync(join(dest, 'sub', '.env')), 'drops nested .env');
+  assert.ok(!existsSync(join(dest, 'sub', '.git')), 'drops nested .git');
+});
+
 test('scaffoldRepo finalizes: strips .git, renames (clone injected)', () => {
   const root = mkdtempSync(join(tmpdir(), 'saaskit-'));
   const dest = join(root, 'cloned');

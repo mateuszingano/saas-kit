@@ -48,7 +48,10 @@ export function migrationFilename(name, date = new Date()) {
  */
 export function migrationSkeleton(name) {
   const table = slugify(name);
-  return `-- ${name}
+  // Flatten all whitespace (incl. newlines) so a multi-line name can't break
+  // out of this single-line `-- ` comment and inject raw SQL below it.
+  const heading = String(name).replace(/\s+/g, ' ').trim();
+  return `-- ${heading}
 -- RLS-first: this table is scoped to a workspace and can't ship exposed.
 -- Adjust the columns; keep the security block. The isolation test in the
 -- boilerplate proves tenant A can't touch tenant B's rows.

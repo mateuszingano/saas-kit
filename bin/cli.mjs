@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // saas-kit — companion CLI for the SaaS boilerplate.
 //   saas-kit new <name> (--repo <url> | --from <dir>)   scaffold a new project
-//   saas-kit doctor [--env <path>]                        check env + Supabase + RLS
+//   saas-kit doctor [--env <path>]                        check env + Supabase reachability
 //   saas-kit gen:migration <name>                         RLS-safe migration
 //   saas-kit check [--skip-e2e]                           pre-deploy gate
 
@@ -17,7 +17,7 @@ const HELP = `saas-kit — companion CLI for the SaaS boilerplate
 
 Usage:
   saas-kit new <name> [--repo <url> | --from <dir>]   Scaffold a new project
-  saas-kit doctor [--env <path>]                      Check env, Supabase, RLS
+  saas-kit doctor [--env <path>]                      Check env + Supabase reachability
   saas-kit gen:migration <name>                       Create an RLS-safe migration
   saas-kit check [--skip-e2e]                         Run the pre-deploy gate
   saas-kit --help                                     Show this help
@@ -112,7 +112,9 @@ function cmdCheck(flags) {
 
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
-  const { flags, positional } = parseArgs(rest);
+  // --repo/--from pick the template source; a bare flag must error loudly, not
+  // silently fall back to the free starter.
+  const { flags, positional } = parseArgs(rest, { valueFlags: ['repo', 'from'] });
 
   if (!command || command === '--help' || command === '-h' || flags.help) {
     console.log(HELP);

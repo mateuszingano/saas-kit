@@ -7,7 +7,7 @@ ship — so the safe path (RLS on, env wired right, checks green) is the default
 npm install -g supabase-saas-kit   # or prefix each command with: npx supabase-saas-kit
 
 saas-kit new my-app              # scaffold (free starter)
-saas-kit doctor                  # env + Supabase + RLS
+saas-kit doctor                  # env + Supabase reachability
 saas-kit gen:migration add_projects   # RLS-safe migration
 saas-kit check                   # pre-deploy gate
 ```
@@ -34,7 +34,7 @@ Answers "is this wired up right?" without deploying to find out:
 - checks the env vars the app actually reads;
 - flags a service-role key exposed to the browser as an **error**, not a warning;
 - pings Supabase over REST to confirm it's reachable;
-- points you at [Airlock](../16-CI-SEGURANCA-SUPABASE/airlock) for a real RLS audit.
+- points you at [Airlock](https://www.npmjs.com/package/airlock-rls) for a real RLS audit.
 
 Exits non-zero when required vars are missing — safe to drop in CI.
 

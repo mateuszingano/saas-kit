@@ -118,8 +118,11 @@ export function scaffoldLocal({ name, from, dest }) {
     recursive: true,
     filter: (src) => {
       const rel = src.slice(resolve(from).length).replace(/^[\\/]/, '');
-      const top = rel.split(/[\\/]/)[0];
-      return !(top && ignoreEntry(top));
+      // Check EVERY path segment, not just the top one: a nested secret like
+      // `sub/.env` or a nested `sub/.git` must be dropped too, not only a
+      // top-level one. Split on both separators for cross-platform paths.
+      const segments = rel.split(/[\\/]/).filter(Boolean);
+      return !segments.some((seg) => ignoreEntry(seg));
     },
   });
   return finalize(dest, name);

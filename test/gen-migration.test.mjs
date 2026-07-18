@@ -43,6 +43,15 @@ test('skeleton enables RLS and scopes all four verbs', () => {
   assert.match(sql, /user_workspace_ids\(\)/);
 });
 
+test('skeleton flattens a multi-line name so it cannot inject SQL', () => {
+  const sql = migrationSkeleton('projects\n-- injected\ndrop table users;');
+  const firstLine = sql.split('\n')[0];
+  // the whole name stays on the single comment line, whitespace flattened
+  assert.equal(firstLine, '-- projects -- injected drop table users;');
+  // no bare (non-comment) injected statement leaked out
+  assert.doesNotMatch(sql, /^drop table users;/m);
+});
+
 test('genMigration writes the file and refuses to clobber', () => {
   const dir = mkdtempSync(join(tmpdir(), 'saaskit-'));
   const path = genMigration({ name: 'add_projects', dir, date: FIXED });
