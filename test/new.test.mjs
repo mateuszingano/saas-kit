@@ -136,6 +136,7 @@ test('validateRepo rejects flag-like and unrecognized sources', () => {
   assert.throws(() => validateRepo('-x'), /cannot start with/);
   assert.throws(() => validateRepo('ftp://evil/r.git'), /invalid --repo/);
   assert.throws(() => validateRepo('x.git'), /invalid --repo/);
+  assert.throws(() => validateRepo('git@-evil.com:o/r.git'), /host starting with/);
   assert.throws(() => validateRepo(''), /required/);
   assert.throws(() => validateRepo('   '), /required/);
 });

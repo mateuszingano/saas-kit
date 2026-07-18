@@ -148,6 +148,11 @@ export function validateRepo(raw) {
       `invalid --repo: "${value}" cannot start with "-" (git would read it as a flag).`
     );
   }
+  // Defense in depth: a scp-like `git@-host:path` puts a leading "-" in the host, which
+  // pre-2017 git could treat as an option. Reject it explicitly (belt to the `--` in clone).
+  if (/^git@-/.test(value)) {
+    throw new Error(`invalid --repo: "${value}" has a host starting with "-".`);
+  }
   if (!/^(https?:\/\/|git@|\.\/|\.\.\/)/.test(value)) {
     throw new Error(
       `invalid --repo: "${value}". Use an https:// URL, a git@host:path URL, ` +
