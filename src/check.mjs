@@ -9,10 +9,12 @@ import { execSync } from 'node:child_process';
 const STEP_ORDER = ['typecheck', 'lint', 'test', 'e2e'];
 
 /**
- * Can `airlock-rls` be resolved/run at all? We ask npx to print the binary's
- * version — cheap, no DB touched. Returns true only when that succeeds. Any
- * failure (offline, package unpublished, registry down) → false, and we skip
- * the audit with a clear note instead of failing the whole gate.
+ * Is `airlock-rls` already installed LOCALLY? We ask npx to print the binary's
+ * version with `--no-install` — cheap, no DB touched, and crucially NO network
+ * fetch. Returns true only when it resolves from the project's own node_modules.
+ * If it isn't installed we return false and skip the audit with a clear note —
+ * we never silently download-and-run a package from the registry (a hijacked
+ * package name would otherwise turn this gate into remote code execution).
  * `probe` is injectable for tests.
  */
 export function airlockAvailable(probe = defaultProbe) {
@@ -20,12 +22,7 @@ export function airlockAvailable(probe = defaultProbe) {
     probe('npx --no-install airlock-rls --version');
     return true;
   } catch {
-    try {
-      probe('npx --yes airlock-rls --version');
-      return true;
-    } catch {
-      return false;
-    }
+    return false; // not installed locally → skip (never auto-fetch + run from the network)
   }
 }
 
@@ -46,7 +43,12 @@ export function buildCheckSteps(scripts = {}, { dbUrl = '', skipE2e = false } = 
   }).map((s) => ({ name: s, cmd: `npm run ${s}` }));
 
   if (dbUrl) {
-    steps.push({ name: 'rls-audit', cmd: `npx airlock-rls "${dbUrl}"` });
+    // Pass the DB url through the SUPABASE_DB_URL env var, NEVER interpolated into a
+    // shell command. airlock-rls reads SUPABASE_DB_URL as a fallback when no
+    // positional url is given, so the command line stays fixed ('npx airlock-rls')
+    // and a password containing shell metacharacters ($(...) / backticks / ;) cannot
+    // execute. The env value is never parsed by a shell.
+    steps.push({ name: 'rls-audit', cmd: 'npx airlock-rls', env: { SUPABASE_DB_URL: dbUrl } });
   }
   return steps;
 }
@@ -92,7 +94,7 @@ export function runCheck(scripts, opts = {}, run = defaultRun, isAirlockAvailabl
     }
     console.log(`\n▶ ${step.name}: ${step.cmd}`);
     try {
-      run(step.cmd);
+      run(step);
       ran.push(step.name);
     } catch {
       console.log(`\n  ✖ ${step.name} failed — stopping.`);
@@ -104,6 +106,10 @@ export function runCheck(scripts, opts = {}, run = defaultRun, isAirlockAvailabl
   return { ok: true, ran, failed: null, skipped };
 }
 
-function defaultRun(cmd) {
-  execSync(cmd, { stdio: 'inherit' });
+function defaultRun(step) {
+  // Fixed command strings (npm run …, npx airlock-rls) with NO interpolated user
+  // input → the shell is safe. Any per-step env (e.g. SUPABASE_DB_URL for the audit)
+  // is layered on top of the process env, so secrets travel in env, not on argv.
+  const env = step.env ? { ...process.env, ...step.env } : process.env;
+  execSync(step.cmd, { stdio: 'inherit', env });
 }

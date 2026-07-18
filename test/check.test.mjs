@@ -20,6 +20,15 @@ test('buildCheckSteps: a dbUrl appends the RLS audit last', () => {
   assert.match(steps.at(-1).cmd, /airlock-rls/);
 });
 
+test('rls-audit passes the DB url via env, never interpolated into the shell command', () => {
+  // A password crafted to break out of a shell must NOT appear in the command line.
+  const evil = 'postgres://u:p@h/db;$(touch /tmp/pwned)`whoami`';
+  const audit = buildCheckSteps(SCRIPTS, { dbUrl: evil }).at(-1);
+  assert.equal(audit.cmd, 'npx airlock-rls', 'command carries NO url → no shell injection surface');
+  assert.equal(audit.env.SUPABASE_DB_URL, evil, 'the url travels in env, where no shell parses it');
+  assert.ok(!audit.cmd.includes('$('), 'the injection payload never reaches the shell command');
+});
+
 test('planSummary notes the skipped RLS audit and missing scripts', () => {
   const { notes } = planSummary({ test: 'vitest' }, {});
   assert.ok(notes.some((n) => /rls-audit skipped/.test(n)));
@@ -28,14 +37,14 @@ test('planSummary notes the skipped RLS audit and missing scripts', () => {
 
 test('runCheck runs every step when all pass', () => {
   const ran = [];
-  const res = runCheck(SCRIPTS, {}, (cmd) => ran.push(cmd));
+  const res = runCheck(SCRIPTS, {}, (step) => ran.push(step.cmd));
   assert.equal(res.ok, true);
   assert.deepEqual(res.ran, ['typecheck', 'lint', 'test', 'e2e']);
 });
 
 test('runCheck stops at the first failure', () => {
-  const res = runCheck(SCRIPTS, {}, (cmd) => {
-    if (cmd.includes('lint')) throw new Error('lint failed');
+  const res = runCheck(SCRIPTS, {}, (step) => {
+    if (step.cmd.includes('lint')) throw new Error('lint failed');
   });
   assert.equal(res.ok, false);
   assert.equal(res.failed, 'lint');
@@ -65,7 +74,7 @@ test('runCheck skips rls-audit (not fail) when airlock is unavailable', () => {
   const res = runCheck(
     SCRIPTS,
     { dbUrl: 'postgres://x' },
-    (cmd) => ran.push(cmd),
+    (step) => ran.push(step.cmd),
     () => false // airlock unavailable
   );
   assert.equal(res.ok, true, 'gate still passes');
@@ -78,7 +87,7 @@ test('runCheck runs rls-audit normally when airlock IS available', () => {
   const res = runCheck(
     SCRIPTS,
     { dbUrl: 'postgres://x' },
-    (cmd) => ran.push(cmd),
+    (step) => ran.push(step.cmd),
     () => true
   );
   assert.equal(res.ok, true);
@@ -90,8 +99,8 @@ test('runCheck: a real rls-audit failure still fails the gate (not a skip)', () 
   const res = runCheck(
     { test: 'vitest' },
     { dbUrl: 'postgres://x' },
-    (cmd) => {
-      if (cmd.includes('airlock-rls')) throw new Error('RLS hole found');
+    (step) => {
+      if (step.cmd.includes('airlock-rls')) throw new Error('RLS hole found');
     },
     () => true // available, so it runs — and its failure must fail the gate
   );

@@ -1,7 +1,8 @@
 // doctor — is this project wired up right? Checks the env vars the boilerplate
-// needs, then (best effort, online) pings Supabase and confirms the anon role
-// is NOT reading a table it shouldn't. The RLS check is what makes this more
-// than a spellchecker: it catches the exposed-table footgun before deploy.
+// needs, then (best effort, online) pings Supabase with a reachability probe:
+// a GET /rest/v1/ that confirms the URL + anon key can reach the REST API. It
+// is a connectivity check, not an RLS check — it does not inspect policies or
+// prove any table is protected.
 
 import { readFileSync, existsSync } from 'node:fs';
 

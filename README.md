@@ -57,7 +57,7 @@ continuous RLS monitoring. Use it on anything.
 
 ## Develop
 ```bash
-npm test          # 29 tests, offline
+npm test          # 44 tests, offline
 node bin/cli.mjs --help
 ```
 
