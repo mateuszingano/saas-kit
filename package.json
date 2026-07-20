@@ -1,6 +1,6 @@
 {
   "name": "supabase-saas-kit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The companion CLI for the SaaS boilerplate: scaffold a new project, check your Supabase connectivity, and generate RLS-safe migrations.",
   "type": "module",
   "bin": {

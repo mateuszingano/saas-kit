@@ -120,5 +120,14 @@ Declared here rather than discovered later:
   policies — but the table-level grant is wider than the owner-scoped variant,
   which grants nothing to `anon`. If you loosen a policy later, that grant is
   already there; keep the policy tight.
+- **Tenancy detection is a text scan, and it does not read dollar-quoted
+  blocks.** `gen:migration` picks the workspace variant when your migrations
+  reference `public.workspaces` / `user_workspace_ids()` in executable SQL. It
+  strips `--` and `/* */` comments and single-quoted strings before matching,
+  but not Postgres dollar-quoted blocks (`$$…$$`). Those primitives named only
+  inside a `$$…$$` literal (not a real dependency) can select the workspace
+  variant in a project that lacks the tables — you would see `relation
+  "public.workspaces" does not exist` on `db push`. Pass the variant explicitly
+  or move the reference out of the dollar-quoted string.
 
 MIT © Mateus Zingano
