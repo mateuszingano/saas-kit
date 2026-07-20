@@ -115,5 +115,10 @@ Declared here rather than discovered later:
 - **The test suite runs on Ubuntu + Node 20 in CI**, while some behaviour is
   Windows-specific (reserved device names, trailing dots). Those paths are
   covered by unit tests but not exercised on a Windows runner.
+- **The workspace-scoped migration grants `select` to `anon`.** RLS still
+  governs which rows are visible — `anon` matches none of them under the shipped
+  policies — but the table-level grant is wider than the owner-scoped variant,
+  which grants nothing to `anon`. If you loosen a policy later, that grant is
+  already there; keep the policy tight.
 
 MIT © Mateus Zingano
