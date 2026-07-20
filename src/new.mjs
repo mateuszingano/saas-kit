@@ -13,6 +13,7 @@ export const DEFAULT_TEMPLATE = 'https://github.com/mateuszingano/nextjs-supabas
 import {
   cpSync,
   existsSync,
+  readdirSync,
   readFileSync,
   writeFileSync,
   rmSync,
@@ -53,6 +54,16 @@ export function validateProjectName(raw) {
     throw new Error('project name cannot start with a dot or underscore');
   }
   if (/[\\/]/.test(name)) throw new Error('project name cannot contain path separators');
+  // Windows rejects these at the Win32 API level even though Node can create
+  // them through the \\?\ path prefix. The result is a directory that exists, is
+  // visible, and cannot be entered or deleted with normal tools — and we used to
+  // print "✔ Scaffolded" and tell the user to `cd` into it. Refuse up front.
+  if (/[. ]$/.test(name)) {
+    throw new Error(`project name cannot end with a dot or space: "${name}" (Windows cannot open such a directory)`);
+  }
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(name)) {
+    throw new Error(`"${name}" is a reserved device name on Windows — pick another project name`);
+  }
   // npm-safe unscoped name: letters, digits, and - _ . only. (No scopes here —
   // the name is also a directory, so we keep it to a single plain segment.)
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(name)) {
@@ -114,18 +125,48 @@ export function scaffoldLocal({ name, from, dest }) {
   if (!from || !existsSync(from)) throw new Error(`template not found: ${from}`);
   if (existsSync(dest)) throw new Error(`refusing to overwrite existing directory: ${dest}`);
 
-  cpSync(from, dest, {
-    recursive: true,
-    filter: (src) => {
-      const rel = src.slice(resolve(from).length).replace(/^[\\/]/, '');
-      // Check EVERY path segment, not just the top one: a nested secret like
-      // `sub/.env` or a nested `sub/.git` must be dropped too, not only a
-      // top-level one. Split on both separators for cross-platform paths.
-      const segments = rel.split(/[\\/]/).filter(Boolean);
-      return !segments.some((seg) => ignoreEntry(seg));
-    },
+  return withRollback(dest, () => {
+    cpSync(from, dest, {
+      recursive: true,
+      filter: (src) => {
+        const rel = src.slice(resolve(from).length).replace(/^[\\/]/, '');
+        // Check EVERY path segment, not just the top one: a nested secret like
+        // `sub/.env` or a nested `sub/.git` must be dropped too, not only a
+        // top-level one. Split on both separators for cross-platform paths.
+        const segments = rel.split(/[\\/]/).filter(Boolean);
+        return !segments.some((seg) => ignoreEntry(seg));
+      },
+    });
+    return finalize(dest, name);
   });
-  return finalize(dest, name);
+}
+
+/**
+ * Run a scaffold step and, if it throws, remove the directory WE created.
+ *
+ * `finalize` runs after the copy/clone and can fail (a template with malformed
+ * package.json, for one). Without this the command exits non-zero having left a
+ * half-written project on disk — and in the --repo path `.git` is already gone,
+ * so the user is left with an orphaned copy AND blocked from retrying by the
+ * "refusing to overwrite existing directory" guard.
+ *
+ * Only cleans up when the destination did NOT exist beforehand: never delete
+ * something we did not create.
+ */
+function withRollback(dest, work) {
+  const preexisting = existsSync(dest);
+  try {
+    return work();
+  } catch (err) {
+    if (!preexisting) {
+      try {
+        rmSync(dest, { recursive: true, force: true });
+      } catch {
+        // Cleanup is best-effort — surface the ORIGINAL failure, not this one.
+      }
+    }
+    throw err;
+  }
 }
 
 /**
@@ -153,7 +194,18 @@ export function validateRepo(raw) {
   if (/^git@-/.test(value)) {
     throw new Error(`invalid --repo: "${value}" has a host starting with "-".`);
   }
-  if (!/^(https?:\/\/|git@|\.\/|\.\.\/)/.test(value)) {
+  // Plaintext http:// is refused. Cloning a TEMPLATE over an unauthenticated
+  // channel is a trivial MITM: whoever sits on the path injects code into a
+  // project the developer is about to run and deploy. There is no integrity
+  // check anywhere in this flow (no commit pin, no checksum), which is fine over
+  // TLS and not fine without it.
+  if (/^http:\/\//i.test(value)) {
+    throw new Error(
+      `invalid --repo: "${value}" uses plaintext http://. Use https:// — a template ` +
+        'cloned over an unencrypted connection can be modified in transit.'
+    );
+  }
+  if (!/^(https:\/\/|git@|\.\/|\.\.\/)/.test(value)) {
     throw new Error(
       `invalid --repo: "${value}". Use an https:// URL, a git@host:path URL, ` +
         'or a ./relative local path.'
@@ -163,14 +215,46 @@ export function validateRepo(raw) {
 }
 
 /** Shallow git clone a template repo into dest, then finalize. */
+/**
+ * Remove every IGNORE-listed entry from a freshly cloned tree, at any depth.
+ *
+ * `cpSync`'s filter does this for the local-template path. A clone has no
+ * filter, so the same rule has to be applied afterwards — otherwise the two
+ * ways of scaffolding give different guarantees, and the one people use by
+ * default is the weaker one.
+ */
+export function pruneIgnored(root) {
+  let entries;
+  try {
+    entries = readdirSync(root, { withFileTypes: true });
+  } catch {
+    return; // unreadable directory — nothing to prune
+  }
+  for (const e of entries) {
+    const p = join(root, e.name);
+    if (ignoreEntry(e.name)) rmSync(p, { recursive: true, force: true });
+    else if (e.isDirectory()) pruneIgnored(p);
+  }
+}
+
 export function scaffoldRepo({ name, repo, dest, clone = defaultClone }) {
   if (!name) throw new Error('usage: saas-kit new <name>');
   // Validate the source BEFORE we touch git or the disk, so a hostile --repo
   // fails fast and the clone never runs.
   const safeRepo = validateRepo(repo);
   if (existsSync(dest)) throw new Error(`refusing to overwrite existing directory: ${dest}`);
-  clone(safeRepo, dest);
-  return finalize(dest, name);
+  return withRollback(dest, () => {
+    clone(safeRepo, dest);
+    // The local-template path filters IGNORE entry by entry; the clone path did
+    // not, so `--repo` — which is the DEFAULT — carried the template author's
+    // `.env`, any nested `sub/.env`, and a committed `node_modules` straight
+    // into the new project. Worse, arriving with a `.env` made `finalize` skip
+    // seeding from `.env.example`, so the developer never saw the config
+    // template and ran with someone else's secrets. Same guarantee on both
+    // paths now.
+    pruneIgnored(dest);
+    return finalize(dest, name);
+  });
 }
 
 // Real clone (injectable so tests don't hit the network). The `--` separator
@@ -181,8 +265,18 @@ function defaultClone(repo, dest) {
     execFileSync('git', ['clone', '--depth', '1', '--', repo, dest], { stdio: 'pipe' });
   } catch (err) {
     const detail = err.stderr ? err.stderr.toString().trim() : err.message;
-    throw new Error(`git clone failed for ${repo}\n  ${detail}`);
+    // Redact credentials embedded in the URL. `https://user:TOKEN@host/repo` is
+    // the common way to clone a private repo — the exact flow the README
+    // recommends — and printing it raw puts the token in CI logs, terminal
+    // scrollback and bug-report screenshots. git itself redacts this in its own
+    // output; we were being less careful than the tool we shell out to.
+    throw new Error(`git clone failed for ${redactUrlCredentials(repo)}\n  ${detail}`);
   }
+}
+
+/** Replace the userinfo portion of a URL with ***, leaving everything else. */
+export function redactUrlCredentials(url) {
+  return String(url).replace(/\/\/[^/@\s]+@/, '//***@');
 }
 
 /**

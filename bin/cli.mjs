@@ -41,12 +41,22 @@ async function probeSupabase(env) {
   const key = env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) return { skipped: true };
   try {
+    // Bounded. Without a timeout, a host that ACCEPTS the connection and then
+    // never answers hangs this forever — measured at 40s and still going before
+    // being killed. The README positions `doctor` as a CI gate, and a hang is
+    // worse there than a failure: the job only dies at the runner's global
+    // timeout, with no indication of why.
     const res = await fetch(`${url.replace(/\/$/, '')}/rest/v1/`, {
       headers: { apikey: key, Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(10_000),
     });
     return { reachable: res.ok || res.status === 404, status: res.status };
   } catch (err) {
-    return { reachable: false, error: err.message };
+    const timedOut = err?.name === 'TimeoutError';
+    return {
+      reachable: false,
+      error: timedOut ? `no response after 10s (the host accepted the connection but never replied)` : err.message,
+    };
   }
 }
 

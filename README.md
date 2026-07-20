@@ -37,9 +37,13 @@ Answers "is this wired up right?" without deploying to find out:
 - points you at [Airlock](https://www.npmjs.com/package/airlock-rls) for a real RLS audit.
 
 Exits non-zero when required vars are missing **or** when the env is filled but
-Supabase can't be reached (unreachable host, wrong URL, network down) — so a
-broken connection fails CI, it doesn't pass silently. The probe is skipped
-(exit 0) only when the env isn't filled in yet.
+Supabase can't be reached (unreachable host, wrong URL, network down, or a host
+that accepts the connection and never answers — the probe gives up after 10s) —
+so a broken connection fails CI, it doesn't pass silently.
+
+When the env isn't filled in yet, the *probe* is skipped, but `doctor` still
+exits non-zero: the missing variables are themselves errors. There is no state
+in which `doctor` exits 0 on an unconfigured project.
 
 ### `gen:migration <name>`
 Creates `supabase/migrations/<timestamp>_<slug>.sql` pre-filled with the
@@ -67,8 +71,35 @@ continuous RLS monitoring. Use it on anything.
 
 ## Develop
 ```bash
-npm test          # 52 tests, offline
+npm test          # 68 tests, offline
 node bin/cli.mjs --help
 ```
+
+## What it does *not* cover yet
+
+Declared here rather than discovered later:
+
+- **`doctor` classifies keys, it does not validate them.** It reads the `role`
+  claim of a legacy Supabase JWT and the `sb_secret_` / `sb_publishable_`
+  prefix of the current format. A key in some other shape (a placeholder, a
+  truncated paste, a third-party token) is left alone rather than guessed at.
+- **`doctor` checks reachability, not RLS.** It confirms the URL and anon key
+  can talk to the REST API. It does not inspect a single policy — that is what
+  `airlock-rls` is for, and `check` runs it when it is installed.
+- **`check` runs what your project already has.** If a script is missing from
+  `package.json` it is reported as absent, not synthesized. If `airlock-rls` is
+  not installed, the RLS step is skipped and named — and if *nothing* ends up
+  running, `check` fails rather than reporting success.
+- **`new --repo` clones over the network.** The template is fetched with `git
+  clone` over TLS; there is no signature or checksum verification beyond what
+  TLS and your git remote provide. Ignored entries (`.env`, `node_modules`,
+  `.git`) are pruned after the clone, so the template author's secrets do not
+  travel — but the code itself is trusted as much as you trust the repo.
+- **Rollback is best-effort at the directory level.** A failure after the copy
+  removes the destination only when it did not exist beforehand. A directory
+  created by another process *during* the clone would be caught in that cleanup.
+- **The test suite runs on Ubuntu + Node 20 in CI**, while some behaviour is
+  Windows-specific (reserved device names, trailing dots). Those paths are
+  covered by unit tests but not exercised on a Windows runner.
 
 MIT © Mateus Zingano

@@ -24,7 +24,8 @@ test('rls-audit passes the DB url via env, never interpolated into the shell com
   // A password crafted to break out of a shell must NOT appear in the command line.
   const evil = 'postgres://u:p@h/db;$(touch /tmp/pwned)`whoami`';
   const audit = buildCheckSteps(SCRIPTS, { dbUrl: evil }).at(-1);
-  assert.equal(audit.cmd, 'npx airlock-rls', 'command carries NO url → no shell injection surface');
+  // --no-install makes "never download-and-run" structural, not check-then-use.
+  assert.equal(audit.cmd, 'npx --no-install airlock-rls', 'command carries NO url → no shell injection surface');
   assert.equal(audit.env.SUPABASE_DB_URL, evil, 'the url travels in env, where no shell parses it');
   assert.ok(!audit.cmd.includes('$('), 'the injection payload never reaches the shell command');
 });
@@ -106,4 +107,31 @@ test('runCheck: a real rls-audit failure still fails the gate (not a skip)', () 
   );
   assert.equal(res.ok, false);
   assert.equal(res.failed, 'rls-audit');
+});
+
+// ONDA 0.1 — "planned" is not "executed". The `!steps.length` guard catches an
+// empty PLAN, but rls-audit is dropped at RUNTIME when airlock-rls isn't
+// installable — so with only that step planned we fell through to `ok: true`
+// and printed `✔ all checks passed ()`, empty parens and all. In CI that is a
+// green pre-deploy gate that verified nothing. Shape: a fresh project with no
+// quality scripts yet, SUPABASE_DB_URL set, airlock not installed.
+test('check: reports failure when every planned step was skipped (nothing verified)', () => {
+  const r = runCheck({ build: 'next build' }, { dbUrl: 'postgres://x' }, () => {}, () => false);
+  assert.equal(r.ok, false, 'a run that executed nothing must not report success');
+  assert.deepEqual(r.ran, []);
+  assert.deepEqual(r.skipped, ['rls-audit']);
+  assert.equal(r.failed, null, 'nothing failed — nothing ran, which is a different thing');
+});
+
+test('check: still passes when at least one step actually executed', () => {
+  const r = runCheck({ typecheck: 'tsc --noEmit' }, {}, () => {}, () => false);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.ran, ['typecheck']);
+});
+
+test('check: a skipped step alongside a real one does not spoil the pass', () => {
+  const r = runCheck({ typecheck: 'tsc --noEmit' }, { dbUrl: 'postgres://x' }, () => {}, () => false);
+  assert.equal(r.ok, true, 'one genuine execution is enough to have verified something');
+  assert.deepEqual(r.ran, ['typecheck']);
+  assert.deepEqual(r.skipped, ['rls-audit']);
 });

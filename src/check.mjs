@@ -9,12 +9,22 @@ import { execSync } from 'node:child_process';
 const STEP_ORDER = ['typecheck', 'lint', 'test', 'e2e'];
 
 /**
- * Is `airlock-rls` already installed LOCALLY? We ask npx to print the binary's
- * version with `--no-install` — cheap, no DB touched, and crucially NO network
- * fetch. Returns true only when it resolves from the project's own node_modules.
- * If it isn't installed we return false and skip the audit with a clear note —
- * we never silently download-and-run a package from the registry (a hijacked
- * package name would otherwise turn this gate into remote code execution).
+ * Is `airlock-rls` resolvable without installing anything? We ask npx to print
+ * the binary's version with `--no-install`.
+ *
+ * What that guarantees, precisely: npx will never DOWNLOAD and execute a package
+ * that isn't already present — so a hijacked package name cannot turn this gate
+ * into remote code execution. That is the property worth having, and it holds.
+ *
+ * What it does NOT guarantee (both of these used to be claimed here and are
+ * false — measured):
+ *   · "no network fetch" — `npx --no-install` still CONSULTS the registry to
+ *     resolve the spec; it just refuses to install. Nothing is downloaded or
+ *     run, but a request does leave the machine.
+ *   · "only from the project's own node_modules" — a GLOBAL install satisfies
+ *     it too. Verified in an empty directory with no node_modules at all.
+ *
+ * If it isn't resolvable we return false and skip the audit with a clear note.
  * `probe` is injectable for tests.
  */
 export function airlockAvailable(probe = defaultProbe) {
@@ -48,7 +58,13 @@ export function buildCheckSteps(scripts = {}, { dbUrl = '', skipE2e = false } = 
     // positional url is given, so the command line stays fixed ('npx airlock-rls')
     // and a password containing shell metacharacters ($(...) / backticks / ;) cannot
     // execute. The env value is never parsed by a shell.
-    steps.push({ name: 'rls-audit', cmd: 'npx airlock-rls', env: { SUPABASE_DB_URL: dbUrl } });
+    // `--no-install` here too, not just in the availability probe. Without it
+    // the guarantee was check-then-use: we verified a local copy existed and
+    // then ran a command that WOULD have installed one if it hadn't. Passing the
+    // flag on the executed command makes "never download-and-run" structural
+    // instead of incidental, and pins the version to whatever the consumer's own
+    // lockfile resolved rather than whatever `latest` is at that moment.
+    steps.push({ name: 'rls-audit', cmd: 'npx --no-install airlock-rls', env: { SUPABASE_DB_URL: dbUrl } });
   }
   return steps;
 }
@@ -101,6 +117,20 @@ export function runCheck(scripts, opts = {}, run = defaultRun, isAirlockAvailabl
       return { ok: false, ran, failed: step.name, skipped };
     }
   }
+  // PLANNED IS NOT THE SAME AS EXECUTED.
+  // The `!steps.length` guard above catches "nothing to plan", but a step can
+  // still be dropped at RUNTIME (rls-audit skips when airlock-rls isn't
+  // installable). With only that step planned, we used to fall through here and
+  // print `✔ all checks passed ()` — note the empty parens — then exit 0. In CI
+  // that is a green pre-deploy gate that verified nothing. The common shape:
+  // a fresh project with no quality scripts yet, SUPABASE_DB_URL set, airlock
+  // not installed.
+  if (!ran.length) {
+    const why = skipped.length ? ` Every planned step was skipped: ${skipped.join(', ')}.` : '';
+    console.log(`\n  ✖ nothing actually ran — no check was executed, so nothing was verified.${why}`);
+    return { ok: false, ran, failed: null, skipped };
+  }
+
   const tail = skipped.length ? ` — skipped: ${skipped.join(', ')}` : '';
   console.log(`\n  ✔ all checks passed (${ran.join(', ')})${tail}.`);
   return { ok: true, ran, failed: null, skipped };
