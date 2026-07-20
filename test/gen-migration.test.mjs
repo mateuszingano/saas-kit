@@ -10,6 +10,7 @@ import {
   migrationSkeleton,
   genMigration,
   detectTenancy,
+  stripSqlNoise,
 } from '../src/gen-migration.mjs';
 
 const FIXED = new Date(Date.UTC(2026, 6, 7, 12, 30, 0)); // 2026-07-07 12:30:00 UTC
@@ -127,4 +128,38 @@ test('genMigration on the paid boilerplate still emits the workspace variant', (
   writeFileSync(join(dir, '20260101000000_workspaces.sql'), 'create table public.workspaces (id uuid primary key);');
   const path = genMigration({ name: 'add_projects', dir, date: FIXED });
   assert.match(readFileSync(path, 'utf8'), /user_workspace_ids\(\)/, 'no regression for the paid path');
+});
+
+// --- detectTenancy must read executable SQL, not comments or strings ----------
+
+// A raw substring match over the file would read `-- see user_workspace_ids()`
+// as a dependency and emit the workspace variant into an owner project — which
+// does not apply, re-opening B13.1 through a narrow trigger.
+test('detectTenancy ignores the primitives when they appear only in a comment', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'saaskit-'));
+  writeFileSync(join(dir, '0.sql'), 'create table public.profiles(id uuid primary key);\n-- TODO: migrate to user_workspace_ids() someday\n');
+  assert.equal(detectTenancy(dir), 'owner');
+});
+
+test('detectTenancy ignores the primitives inside a string literal', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'saaskit-'));
+  writeFileSync(join(dir, '0.sql'), "insert into notes(body) values ('create table public.workspaces (id uuid)');");
+  assert.equal(detectTenancy(dir), 'owner');
+});
+
+test('detectTenancy still fires on real executable workspace SQL', () => {
+  for (const sql of [
+    'create table public.workspaces (id uuid primary key);',
+    'create policy p on t for select using (workspace_id in (select public.user_workspace_ids()));',
+  ]) {
+    const dir = mkdtempSync(join(tmpdir(), 'saaskit-'));
+    writeFileSync(join(dir, '0.sql'), sql);
+    assert.equal(detectTenancy(dir), 'workspace', sql.slice(0, 30));
+  }
+});
+
+test('stripSqlNoise removes comments and string literals, keeps executable SQL', () => {
+  const out = stripSqlNoise("select 1; -- user_workspace_ids()\n/* public.workspaces */ create table public.workspaces (x int);");
+  assert.doesNotMatch(out, /user_workspace_ids/);
+  assert.match(out, /create table public\.workspaces/);
 });

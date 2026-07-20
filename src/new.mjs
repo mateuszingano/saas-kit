@@ -83,7 +83,12 @@ export function validateProjectName(raw) {
   if (/[. ]$/.test(name)) {
     throw new Error(`project name cannot end with a dot or space: "${name}" (Windows cannot open such a directory)`);
   }
-  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(name)) {
+  // Windows treats the reserved name PLUS ANY EXTENSION as the device too:
+  // `nul.js`, `aux.config.js`, `com1.txt` all resolve to the device, not a file.
+  // The guard therefore matches the base name before the first dot, not just the
+  // bare name. `console`, `communications`, `nullable`, `com1-api` are NOT
+  // devices (the base name is not exactly one of these) and stay allowed.
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(name)) {
     throw new Error(`"${name}" is a reserved device name on Windows — pick another project name`);
   }
   // npm-safe unscoped name: letters, digits, and - _ . only. (No scopes here —

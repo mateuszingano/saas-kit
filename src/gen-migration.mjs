@@ -65,11 +65,25 @@ export function detectTenancy(dir = 'supabase/migrations') {
     } catch {
       continue;
     }
-    if (/user_workspace_ids\s*\(|create\s+table\s+(if\s+not\s+exists\s+)?public\.workspaces\b/i.test(sql)) {
+    // Match on EXECUTABLE sql only. A comment mentioning the workspace primitives
+    // (`-- TODO: move to user_workspace_ids()`) is not a dependency, but a raw
+    // substring match would read it as one and emit the workspace variant into a
+    // project that has no such table — re-opening the exact B13.1 failure. Strip
+    // line comments (`-- …`), block comments (`/* … */`), and single-quoted
+    // string literals before testing.
+    if (/user_workspace_ids\s*\(|create\s+table\s+(if\s+not\s+exists\s+)?public\.workspaces\b/i.test(stripSqlNoise(sql))) {
       return 'workspace';
     }
   }
   return 'owner';
+}
+
+/** Remove comments and string literals so a detector matches only real SQL. */
+export function stripSqlNoise(sql) {
+  return String(sql)
+    .replace(/\/\*[\s\S]*?\*\//g, ' ') // /* block comments */
+    .replace(/--[^\n]*/g, ' ')          // -- line comments
+    .replace(/'(?:[^']|'')*'/g, "''");  // 'single-quoted' string literals
 }
 
 /**

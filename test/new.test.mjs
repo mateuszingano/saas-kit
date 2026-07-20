@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   ignoreEntry,
+  scaffold,
   defaultClone,
   withRollback,
   redactUrlCredentials,
@@ -420,4 +421,43 @@ test('defaultClone redacts the token out of a clone failure', () => {
     () => defaultClone('https://user:ghp_SECRETTOKEN@github.com/o/r.git', '/tmp/x', throwing),
     (err) => !err.message.includes('ghp_SECRETTOKEN') && err.message.includes('***'),
   );
+});
+
+// --- B4.2 · reserved device name WITH an extension is still the device --------
+
+// Windows resolves `nul.js`, `aux.config.js`, `com1.txt` to the device, not a
+// file — the base name before the first dot is what counts. The guard was
+// anchored to the bare name only, so these were accepted and produced a
+// directory the Explorer/cmd cannot open or delete.
+test('validateProjectName rejects a reserved device name with any extension', () => {
+  for (const name of ['nul.js', 'aux.config.js', 'com1.txt', 'con.md', 'lpt1.tar.gz', 'prn.x']) {
+    assert.throws(() => validateProjectName(name), /reserved device name/i, name);
+  }
+});
+
+test('validateProjectName still allows names that merely start with a device string', () => {
+  // console/communications/nullable are NOT devices; com1-api is not `com1`.
+  for (const name of ['console', 'communications', 'nullable', 'com1-api', 'printer', 'auxiliary', 'connect']) {
+    assert.equal(validateProjectName(name), name, name);
+  }
+});
+
+// --- P3 · the CLI holds no shared runtime state -------------------------------
+
+// Declared and pinned: every command writes only to its own dest/cwd and keeps
+// no module-level mutable state, so there is no cross-invocation race to test.
+// This test fails if someone introduces shared mutable state that two runs could
+// stomp — the trigger to add a concurrency test then.
+test('scaffold is stateless: two runs into different dirs do not interfere', () => {
+  const parent = mkdtempSync(join(tmpdir(), 'saaskit-par-'));
+  const from = join(parent, 'tmpl');
+  mkdirSync(join(from, 'src'), { recursive: true });
+  writeFileSync(join(from, 'package.json'), '{"name":"tmpl","version":"1.0.0"}');
+  writeFileSync(join(from, '.env.example'), 'KEY=');
+  const a = join(parent, 'a');
+  const b = join(parent, 'b');
+  scaffold({ name: 'a', dest: a, flags: { from } });
+  scaffold({ name: 'b', dest: b, flags: { from } });
+  assert.match(readFileSync(join(a, 'package.json'), 'utf8'), /"name": ?"a"/);
+  assert.match(readFileSync(join(b, 'package.json'), 'utf8'), /"name": ?"b"/);
 });
