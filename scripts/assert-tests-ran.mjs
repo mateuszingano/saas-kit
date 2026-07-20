@@ -16,7 +16,7 @@ import { readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const MIN_FILES = 5
-const MIN_TESTS = 70
+const MIN_TESTS = 108
 
 const res = spawnSync(process.execPath, ['--test', '--test-reporter=tap'], {
   encoding: 'utf8',

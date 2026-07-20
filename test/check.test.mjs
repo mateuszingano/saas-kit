@@ -135,3 +135,27 @@ test('check: a skipped step alongside a real one does not spoil the pass', () =>
   assert.deepEqual(r.ran, ['typecheck']);
   assert.deepEqual(r.skipped, ['rls-audit']);
 });
+
+// B1.2 / PR17 — "if nothing ends up running, check fails rather than reporting
+// success" (README). An EMPTY script is a string, so a typeof check let it into
+// the plan; `npm run test` on "" exits 0, the step counted as ran, and four
+// empty scripts produced `✔ all checks passed` with exit 0. This is the same
+// planned-is-not-executed bug the !ran.length guard exists for, one level up.
+test('check: declared-but-empty scripts are not steps', () => {
+  const { steps, notes } = planSummary({ typecheck: '', lint: '  ', test: '', e2e: '' }, {});
+  assert.equal(steps.length, 0, 'an empty script must not become a step');
+  assert.ok(notes.some((n) => /EMPTY/.test(n)), 'and the user must be told they are empty');
+});
+
+test('check: four empty scripts FAIL the gate instead of passing it', () => {
+  const r = runCheck({ typecheck: '', lint: '', test: '', e2e: '' }, {}, () => {});
+  assert.equal(r.ok, false, 'a gate that ran nothing must not report success');
+  assert.deepEqual(r.ran, []);
+});
+
+test('check: a real script still runs (no false negative from the empty check)', () => {
+  const ran = [];
+  const r = runCheck({ typecheck: 'tsc --noEmit', test: '' }, {}, (s) => ran.push(s.name));
+  assert.equal(r.ok, true);
+  assert.deepEqual(ran, ['typecheck'], 'the empty one is dropped, the real one runs');
+});

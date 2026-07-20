@@ -7,8 +7,15 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # Pinned to the commit, not the tag: `@v4` is a mutable ref the action's
+      # owner can repoint at any time, so a tag pin trusts them forever rather
+      # than trusting the code we reviewed.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
-      - run: node --test
+      # `node --test` alone exits 0 with "pass 0" when it finds no test files, so
+      # a PR that moves or deletes test/ goes green. assert-tests-ran.mjs holds a
+      # floor (count + file count) and was only wired into prepublishOnly, which
+      # is too late: CI is where the regression should be caught.
+      - run: npm test && node scripts/assert-tests-ran.mjs

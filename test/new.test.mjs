@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   ignoreEntry,
+  defaultClone,
+  withRollback,
   redactUrlCredentials,
   renamePackage,
   resolveSource,
@@ -326,4 +328,96 @@ test('pruneIgnored removes a symlinked ignore entry without touching its target'
   assert.equal(existsSync(join(proj, 'node_modules')), false, 'the link itself goes');
   assert.equal(existsSync(join(outside, 'precious.txt')), true, 'what it pointed at stays');
   assert.equal(existsSync(join(proj, 'sub', 'keep.js')), true);
+});
+
+// --- B7.2 / PR18 · "the template author's secrets do not travel" -------------
+
+// The list used to be three exact `.env` spellings, so .env.production and
+// .npmrc travelled. .npmrc is the worst of them: it holds an npm auth token and
+// sits in the repo root of anyone who publishes packages — which is exactly who
+// authors a paid template.
+test('ignoreEntry drops every secret-bearing dotfile, not just the three we remembered', () => {
+  for (const name of [
+    '.env', '.env.local', '.env.test', '.env.production', '.env.development', '.env.staging',
+    '.npmrc', '.netrc', '.envrc', '.git-credentials', '.vercel', '.aws', '.terraformrc',
+  ]) {
+    assert.equal(ignoreEntry(name), true, `${name} must never reach the new project`);
+  }
+});
+
+test('ignoreEntry keeps the placeholder file the scaffold depends on', () => {
+  // finalize() copies .env.example to .env; a blanket .env prefix rule would
+  // delete it and silently break every scaffold.
+  for (const name of ['.env.example', '.env.sample', '.env.template']) {
+    assert.equal(ignoreEntry(name), false, `${name} is public and required`);
+  }
+});
+
+test('ignoreEntry does not over-match names that merely start with .env', () => {
+  // `.environment-notes.md` is not a secret. The rule is `.env` exactly or a
+  // `.env.` prefix, not a bare string prefix.
+  assert.equal(ignoreEntry('.environment-notes.md'), false);
+  assert.equal(ignoreEntry('.envoy.yaml'), false);
+});
+
+// --- B7.1 · redaction must not stop at the first @ ---------------------------
+
+// A password may legally contain `@`. The old class `[^/@\s]+` stopped at the
+// first one, so `https://user:p@ssw0rd@host/r` printed the TAIL of the password
+// into the CI log this function exists to keep it out of.
+test('redactUrlCredentials redacts a password containing @', () => {
+  for (const [input, secret] of [
+    ['https://user:p@ssw0rd@github.com/o/r.git', 'ssw0rd'],
+    ['https://user:a@b@c@github.com/o/r.git', 'b@c'],
+    ['https://tok@en:p@ss@gitlab.example/o/r.git', 'ss'],
+  ]) {
+    const out = redactUrlCredentials(input);
+    assert.ok(!out.includes(secret), `leaked "${secret}" in: ${out}`);
+    assert.ok(out.startsWith('https://***@'), out);
+  }
+});
+
+test('redactUrlCredentials clears credentials carried in the query string', () => {
+  const out = redactUrlCredentials('https://github.com/o/r.git?token=SECRET123&ref=main');
+  assert.ok(!out.includes('SECRET123'), out);
+  assert.ok(out.includes('ref=main'), 'non-sensitive params survive');
+});
+
+test('redactUrlCredentials leaves a clean URL untouched', () => {
+  const clean = 'https://github.com/owner/repo.git';
+  assert.equal(redactUrlCredentials(clean), clean);
+  assert.equal(redactUrlCredentials('https://host/path?e=a@b.com'), 'https://host/path?e=a@b.com');
+});
+
+// --- F7 · controls that were green under mutation now have direct traps ------
+
+// withRollback: the !preexisting guard decides whether a failed scaffold deletes
+// the directory. Inverting it deleted a directory the user already had. The only
+// test that seemed to cover it went through the overwrite guard, which rejects
+// first — so the rollback branch was never reached. Test it directly.
+test('withRollback removes a directory it created when the work throws', () => {
+  const parent = mkdtempSync(join(tmpdir(), 'saaskit-rb-'));
+  const dest = join(parent, 'new-project'); // does NOT preexist
+  assert.throws(() => withRollback(dest, () => { mkdirSync(dest); throw new Error('boom'); }), /boom/);
+  assert.equal(existsSync(dest), false, 'a dir we created must be cleaned up on failure');
+});
+
+test('withRollback NEVER deletes a directory that already existed', () => {
+  const parent = mkdtempSync(join(tmpdir(), 'saaskit-rb-'));
+  const dest = join(parent, 'mine');
+  mkdirSync(dest);
+  writeFileSync(join(dest, 'keep.txt'), 'user data'); // preexisting content
+  assert.throws(() => withRollback(dest, () => { throw new Error('boom'); }), /boom/);
+  assert.equal(existsSync(join(dest, 'keep.txt')), true, 'must not delete what it did not create');
+});
+
+// defaultClone: the credential redaction lived in its catch, and nothing tested
+// that call site — a clone failure with a token in the URL leaked it into the
+// thrown error (CI logs, scrollback).
+test('defaultClone redacts the token out of a clone failure', () => {
+  const throwing = () => { const e = new Error('fatal: auth failed'); e.stderr = Buffer.from('remote: rejected'); throw e; };
+  assert.throws(
+    () => defaultClone('https://user:ghp_SECRETTOKEN@github.com/o/r.git', '/tmp/x', throwing),
+    (err) => !err.message.includes('ghp_SECRETTOKEN') && err.message.includes('***'),
+  );
 });

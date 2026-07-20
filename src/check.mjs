@@ -49,7 +49,14 @@ function defaultProbe(cmd) {
 export function buildCheckSteps(scripts = {}, { dbUrl = '', skipE2e = false } = {}) {
   const steps = STEP_ORDER.filter((s) => {
     if (s === 'e2e' && skipE2e) return false;
-    return typeof scripts[s] === 'string';
+    // A DECLARED script is not a script that DOES anything. `"test": ""` is a
+    // string, so a type check let it into the plan; `npm run test` on an empty
+    // script exits 0, the step landed in `ran`, and the `!ran.length` guard
+    // below never fired. Four empty scripts produced
+    // `✔ all checks passed (typecheck, lint, test, e2e)` and exit 0 having
+    // verified nothing — the same "planned is not executed" bug the guard below
+    // was written for, one level up. Require content, not type.
+    return typeof scripts[s] === 'string' && scripts[s].trim() !== '';
   }).map((s) => ({ name: s, cmd: `npm run ${s}` }));
 
   if (dbUrl) {
@@ -74,9 +81,15 @@ export function planSummary(scripts = {}, opts = {}) {
   const steps = buildCheckSteps(scripts, opts);
   const names = steps.map((s) => s.name);
   const missing = STEP_ORDER.filter((s) => typeof scripts[s] !== 'string');
+  // Declared-but-empty is reported SEPARATELY from absent. Folding it into
+  // `missing` would hide the more interesting case: an absent script is a
+  // project that hasn't got there yet, an empty one looks configured and
+  // verifies nothing — the reader needs to know which they have.
+  const empty = STEP_ORDER.filter((s) => typeof scripts[s] === 'string' && scripts[s].trim() === '');
   const notes = [];
   if (!opts.dbUrl) notes.push('rls-audit skipped (set SUPABASE_DB_URL to enable)');
   if (missing.length) notes.push(`no script for: ${missing.join(', ')}`);
+  if (empty.length) notes.push(`declared but EMPTY, so not run: ${empty.join(', ')}`);
   return { steps, names, notes };
 }
 

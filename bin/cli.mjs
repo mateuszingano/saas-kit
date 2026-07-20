@@ -8,9 +8,9 @@
 import { resolve, join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { parseArgs } from '../src/args.mjs';
-import { genMigration } from '../src/gen-migration.mjs';
+import { genMigration, detectTenancy } from '../src/gen-migration.mjs';
 import { scaffold, validateProjectName } from '../src/new.mjs';
-import { loadEnv, checkEnv } from '../src/doctor.mjs';
+import { loadEnvDetailed, checkEnv, probeSupabase } from '../src/doctor.mjs';
 import { runCheck } from '../src/check.mjs';
 
 const HELP = `saas-kit — companion CLI for the SaaS boilerplate
@@ -35,41 +35,28 @@ Examples:
   SUPABASE_DB_URL=postgres://... saas-kit check
 `;
 
-// Best-effort online check: can the anon key reach REST?
-async function probeSupabase(env) {
-  const url = env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) return { skipped: true };
-  try {
-    // Bounded. Without a timeout, a host that ACCEPTS the connection and then
-    // never answers hangs this forever — measured at 40s and still going before
-    // being killed. The README positions `doctor` as a CI gate, and a hang is
-    // worse there than a failure: the job only dies at the runner's global
-    // timeout, with no indication of why.
-    const res = await fetch(`${url.replace(/\/$/, '')}/rest/v1/`, {
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
-      signal: AbortSignal.timeout(10_000),
-    });
-    return { reachable: res.ok || res.status === 404, status: res.status };
-  } catch (err) {
-    const timedOut = err?.name === 'TimeoutError';
-    return {
-      reachable: false,
-      error: timedOut ? `no response after 10s (the host accepted the connection but never replied)` : err.message,
-    };
-  }
-}
-
 async function cmdDoctor(flags) {
-  const envPath = typeof flags.env === 'string' ? flags.env : '.env';
-  const env = loadEnv(envPath, process.env);
+  // No --env means the whole Next chain (.env, .env.local, …), not just `.env`.
+  const envPath = typeof flags.env === 'string' ? flags.env : null;
+  const { env, sources, unparsed, files } = loadEnvDetailed(envPath, process.env);
   const { results, ok } = checkEnv(env);
 
-  console.log(`\nsaas-kit doctor — ${existsSync(envPath) ? envPath : 'process env'}\n`);
+  console.log(`\nsaas-kit doctor — ${files.length ? files.join(', ') : 'process env'}\n`);
   for (const r of results) {
     const mark = r.status === 'ok' ? '✔' : r.status === 'warn' ? '!' : '✖';
-    console.log(`  ${mark} ${r.key}${r.present ? '' : '  (missing)'}`);
+    const from = r.present && sources[r.key] ? `  ← ${sources[r.key]}` : '';
+    console.log(`  ${mark} ${r.key}${r.present ? '' : '  (missing)'}${from}`);
     if (r.status !== 'ok') console.log(`      ${r.hint}`);
+  }
+
+  // A line that could not be turned into a key is NOT reported as fine. This is
+  // how `export FOO=bar` hid a leaked key for a whole release: the parser
+  // dropped it in silence, so there was nothing on screen to be suspicious of.
+  if (unparsed.length) {
+    console.log('');
+    for (const { file, line } of unparsed) {
+      console.log(`  ! ${file}: could not parse "${line.slice(0, 60)}" — this line was NOT checked.`);
+    }
   }
 
   const probe = await probeSupabase(env);
@@ -78,6 +65,10 @@ async function cmdDoctor(flags) {
   } else if (probe.reachable) {
     console.log(`\n  ✔ Supabase reachable (HTTP ${probe.status}).`);
     console.log('  · For a real RLS audit, run: npx airlock-rls "$SUPABASE_DB_URL"');
+  } else if (probe.refused) {
+    // Not "could not reach" — we declined to try, and saying so tells the user
+    // it is their URL that needs fixing, not their network.
+    console.log(`\n  ✖ Probe refused: ${probe.error}`);
   } else {
     console.log(`\n  ✖ Could not reach Supabase (${probe.error || 'HTTP ' + probe.status}).`);
   }
@@ -104,8 +95,18 @@ function cmdNew(positional, flags) {
 
 function cmdGenMigration(positional) {
   const name = positional.join(' ').trim();
-  const path = genMigration({ name });
+  const tenancy = detectTenancy();
+  const path = genMigration({ name, tenancy });
   console.log(`✔ Created ${path}`);
+  // Say which shape was emitted. The workspace variant needs public.workspaces
+  // and public.user_workspace_ids(), which only the paid boilerplate ships —
+  // emitting it into a project that lacks them produced SQL that could not be
+  // applied at all, with nothing on screen to explain why.
+  console.log(
+    tenancy === 'workspace'
+      ? '  Scoped to the workspace (public.workspaces detected).'
+      : '  Scoped to the row owner (no public.workspaces here — auth.users only).'
+  );
   console.log('  Edit the columns; keep the RLS block. Then: supabase db push');
 }
 

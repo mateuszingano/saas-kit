@@ -5,6 +5,105 @@
 // prove any table is protected.
 
 import { readFileSync, existsSync } from 'node:fs';
+import { redactUrlCredentials } from './redact.mjs';
+
+// Loopback hosts, where plaintext http:// is the normal, correct thing: this is
+// exactly what `supabase start` prints (http://127.0.0.1:54321). Everything else
+// must be TLS — see `classifySupabaseUrl`.
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+/**
+ * Is this URL safe to send the anon key to?
+ *
+ * The probe attaches the key as a header. Over plaintext http:// to a non-local
+ * host, anyone on the path reads it — and `validateRepo` already refuses http://
+ * for exactly this reason, with a paragraph explaining why. The two paths of the
+ * same binary disagreed; this closes the gap.
+ *
+ * The obfuscated IP forms (http://2130706433, 0x7f000001, 017700000001) need no
+ * special handling: WHATWG `new URL()` normalizes all of them to 127.0.0.1, so
+ * they land on the loopback branch and are allowed for the same reason
+ * http://127.0.0.1 is — they ARE loopback. There is no bypass to close here, and
+ * a hand-rolled check for them would be strictly worse than the parser. Verified
+ * in test rather than assumed.
+ *
+ * Returns a verdict rather than throwing, so `doctor` can report it as a failed
+ * check alongside the others instead of dying with a stack trace.
+ */
+export function classifySupabaseUrl(raw) {
+  let parsed;
+  try {
+    parsed = new URL(String(raw));
+  } catch {
+    return { ok: false, reason: `NEXT_PUBLIC_SUPABASE_URL is not a valid URL: ${redactUrlCredentials(raw)}` };
+  }
+  if (parsed.protocol === 'https:') return { ok: true };
+  if (parsed.protocol === 'http:') {
+    if (LOOPBACK.has(parsed.hostname)) return { ok: true, local: true };
+    return {
+      ok: false,
+      reason:
+        `refusing to send the anon key to ${redactUrlCredentials(parsed.origin)} over plaintext http://. ` +
+        'Use https:// (http:// is allowed only for localhost, where `supabase start` runs).',
+    };
+  }
+  return { ok: false, reason: `unsupported scheme "${parsed.protocol}" — Supabase URLs are https://.` };
+}
+
+/**
+ * Best-effort online check: can the anon key reach REST?
+ *
+ * `fetchImpl` is injectable so this is testable without the network — it used to
+ * live in bin/cli.mjs, where nothing could import it without executing the CLI,
+ * which is why none of its behaviour was covered.
+ */
+export async function probeSupabase(env, { fetchImpl = fetch } = {}) {
+  const url = env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) return { skipped: true };
+
+  const verdict = classifySupabaseUrl(url);
+  if (!verdict.ok) return { reachable: false, refused: true, error: verdict.reason };
+
+  try {
+    // Bounded. Without a timeout, a host that ACCEPTS the connection and then
+    // never answers hangs this forever — measured at 40s and still going before
+    // being killed. The README positions `doctor` as a CI gate, and a hang is
+    // worse there than a failure: the job only dies at the runner's global
+    // timeout, with no indication of why.
+    //
+    // `redirect: 'manual'` because following one hands the anon key to whatever
+    // host the redirect names. Node drops `Authorization` across origins but
+    // keeps the custom `apikey` header, so a 302 was enough to walk the key off
+    // to an arbitrary listener — and the probe still printed "reachable".
+    const res = await fetchImpl(`${url.replace(/\/$/, '')}/rest/v1/`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(10_000),
+      redirect: 'manual',
+    });
+    if (res.status >= 300 && res.status < 400) {
+      return {
+        reachable: false,
+        status: res.status,
+        error:
+          `the host answered with an HTTP ${res.status} redirect, which was not followed. ` +
+          'A Supabase REST root does not redirect — check the URL.',
+      };
+    }
+    // 404 counts: the REST root answers 404 on some project configurations, and
+    // the point of the probe is "the host is up and speaking HTTP to this key".
+    return { reachable: res.ok || res.status === 404, status: res.status };
+  } catch (err) {
+    const timedOut = err?.name === 'TimeoutError';
+    // fetch embeds the URL — userinfo included — in its own error text.
+    return {
+      reachable: false,
+      error: timedOut
+        ? 'no response after 10s (the host accepted the connection but never replied)'
+        : redactUrlCredentials(err.message),
+    };
+  }
+}
 
 // The vars the app actually reads (grounded in the boilerplate .env.example).
 export const ENV_SPEC = [
@@ -25,28 +124,107 @@ export const ENV_SPEC = [
   },
 ];
 
-/** Parse a .env file into a plain object. Tolerates comments, blanks, quotes. */
-export function parseEnv(text) {
+/**
+ * Parse a .env file into a plain object. Tolerates comments, blanks, quotes,
+ * a BOM, and the `export FOO=bar` form.
+ *
+ * `export ` matters more than it looks. It is the form used by everyone who also
+ * `source .env` from a shell, and without stripping it the key became the literal
+ * string "export NEXT_PUBLIC_ADMIN_KEY" — which does not start with
+ * `NEXT_PUBLIC_`, so the service-role sweep in `checkEnv` skipped it entirely and
+ * `doctor` exited 0 on a project shipping an RLS-bypassing key to every browser.
+ * The whole feature, defeated by seven characters of prefix.
+ *
+ * `parseEnvDetailed` also returns the lines it could NOT turn into a key. The
+ * silent `continue` was half the bug: the key vanished with no output at all, so
+ * there was nothing to notice. A parser that drops input without saying so
+ * cannot be trusted by a gate, and the next unhandled prefix would fail exactly
+ * the same way, just as quietly.
+ */
+export function parseEnvDetailed(text) {
   const out = {};
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
+  const unparsed = [];
+  for (const raw of String(text).split(/\r?\n/)) {
+    // Strip a UTF-8 BOM on the first line before anything else looks at it.
+    const line = raw.replace(/^﻿/, '').trim();
     if (!line || line.startsWith('#')) continue;
     const eq = line.indexOf('=');
-    if (eq === -1) continue;
-    const key = line.slice(0, eq).trim();
+    if (eq === -1) {
+      unparsed.push(line);
+      continue;
+    }
+    const key = line.slice(0, eq).trim().replace(/^export\s+/, '').trim();
+    if (!key) {
+      unparsed.push(line);
+      continue;
+    }
     let val = line.slice(eq + 1).trim();
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);
     }
     out[key] = val;
   }
-  return out;
+  return { env: out, unparsed };
 }
 
-/** Merge process.env over a .env file at `envPath` (real env wins). */
-export function loadEnv(envPath = '.env', processEnv = {}) {
-  const fromFile = existsSync(envPath) ? parseEnv(readFileSync(envPath, 'utf8')) : {};
-  return { ...fromFile, ...processEnv };
+/** Parse a .env file into a plain object. See `parseEnvDetailed`. */
+export function parseEnv(text) {
+  return parseEnvDetailed(text).env;
+}
+
+/**
+ * The Next.js env chain, in load order — LATER FILES WIN.
+ *
+ * Reading only `.env` was a hole big enough to drive the whole feature through:
+ * `.env.local` overrides `.env` in Next, so it is the file whose values the app
+ * ACTUALLY runs with, and it is where people put the real keys precisely because
+ * it is gitignored. A `.env` full of placeholders next to a `.env.local` holding
+ * a service-role key in the anon slot audited clean. The scaffold's own IGNORE
+ * list already knew `.env.local` was sensitive; the doctor just never opened it.
+ *
+ * `.env.<mode>.local` is included for completeness; `mode` defaults to
+ * development, which is what a developer running `doctor` locally has.
+ */
+export function envChain(mode = 'development') {
+  return ['.env', `.env.${mode}`, '.env.local', `.env.${mode}.local`];
+}
+
+/**
+ * Merge process.env over the .env chain (real env wins).
+ *
+ * An explicit `envPath` means "audit exactly this file" and does NOT expand into
+ * the chain — the flag is how you point the doctor at something unusual, and
+ * silently reading four other files would defeat that.
+ *
+ * Returns { env, sources, unparsed }: `sources` maps each var to the file it
+ * finally came from, so the report can say WHERE the bad key lives. Finding a
+ * leak and not saying which of four files holds it is a bad bug report.
+ */
+export function loadEnvDetailed(envPath = null, processEnv = {}, { mode = 'development', cwd = '.' } = {}) {
+  const files = envPath ? [envPath] : envChain(mode).map((f) => `${cwd}/${f}`);
+  const env = {};
+  const sources = {};
+  const unparsed = [];
+  for (const file of files) {
+    if (!existsSync(file)) continue;
+    const parsed = parseEnvDetailed(readFileSync(file, 'utf8'));
+    for (const [k, v] of Object.entries(parsed.env)) {
+      env[k] = v;
+      sources[k] = file;
+    }
+    for (const line of parsed.unparsed) unparsed.push({ file, line });
+  }
+  for (const [k, v] of Object.entries(processEnv)) {
+    if (typeof v !== 'string') continue;
+    env[k] = v;
+    sources[k] = 'process env';
+  }
+  return { env, sources, unparsed, files: files.filter((f) => existsSync(f)) };
+}
+
+/** Merge process.env over the .env chain (real env wins). See `loadEnvDetailed`. */
+export function loadEnv(envPath = null, processEnv = {}, opts = {}) {
+  return loadEnvDetailed(envPath, processEnv, opts).env;
 }
 
 /**

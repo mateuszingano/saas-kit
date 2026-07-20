@@ -5,6 +5,8 @@ ship — so the safe path (RLS on, env wired right, checks green) is the default
 
 ```bash
 npm install -g supabase-saas-kit   # or prefix each command with: npx supabase-saas-kit
+# In CI, pin the version — `npx supabase-saas-kit` resolves to whatever is latest
+# at job time, which is not a gate you can reproduce: npx supabase-saas-kit@0.1.0
 
 saas-kit new my-app              # scaffold (free starter)
 saas-kit doctor                  # env + Supabase reachability
@@ -46,10 +48,14 @@ exits non-zero: the missing variables are themselves errors. There is no state
 in which `doctor` exits 0 on an unconfigured project.
 
 ### `gen:migration <name>`
-Creates `supabase/migrations/<timestamp>_<slug>.sql` pre-filled with the
-boilerplate's RLS-first pattern: RLS enabled, API roles granted, and all four
-verbs scoped to the user's workspaces. Shipping a table with RLS off is the #1
-Supabase footgun — this makes it the hard thing to do by accident.
+Creates `supabase/migrations/<timestamp>_<slug>.sql` pre-filled with an RLS-first
+pattern: RLS enabled, API roles granted, all four verbs scoped. It reads your
+existing migrations and matches the project it is in — **workspace-scoped** when
+`public.workspaces` / `public.user_workspace_ids()` are present (the multi-tenant
+boilerplate), **owner-scoped** to `auth.uid()` otherwise (the free starter and
+any plain Supabase project). Either way the generated file applies to the project
+that produced it. Shipping a table with RLS off is the #1 Supabase footgun — this
+makes it the hard thing to do by accident.
 
 ### `check [--skip-e2e]`
 The pre-deploy gate. Runs the quality steps the project ships — `typecheck`,
@@ -71,7 +77,7 @@ continuous RLS monitoring. Use it on anything.
 
 ## Develop
 ```bash
-npm test          # 70 tests, offline
+npm test          # 108 tests, offline
 node bin/cli.mjs --help
 ```
 
@@ -84,17 +90,25 @@ Declared here rather than discovered later:
   prefix of the current format. A key in some other shape (a placeholder, a
   truncated paste, a third-party token) is left alone rather than guessed at.
 - **`doctor` checks reachability, not RLS.** It confirms the URL and anon key
-  can talk to the REST API. It does not inspect a single policy — that is what
-  `airlock-rls` is for, and `check` runs it when it is installed.
-- **`check` runs what your project already has.** If a script is missing from
-  `package.json` it is reported as absent, not synthesized. If `airlock-rls` is
-  not installed, the RLS step is skipped and named — and if *nothing* ends up
-  running, `check` fails rather than reporting success.
+  can talk to the REST API — over the whole Next env chain (`.env`, `.env.local`,
+  `.env.<mode>`), with later files winning as Next loads them, and it names the
+  file each variable came from. It does not inspect a single policy — that is
+  what `airlock-rls` is for, and `check` runs it when it is installed. The probe
+  refuses plaintext `http://` to a non-local host and does not follow redirects,
+  so the anon key is never handed to a host you did not name.
+- **`check` runs what your project already has.** A script that is missing from
+  `package.json` is reported absent; a script that is present but *empty* is
+  reported empty and not counted — a declared-but-empty step never reads as a
+  passing check. If `airlock-rls` is not installed, the RLS step is skipped and
+  named — and if *nothing* ends up running, `check` fails rather than reporting
+  success. It cannot tell a real command from a no-op that exits 0: a script set
+  to `echo skipping` or `true` will count as run.
 - **`new --repo` clones over the network.** The template is fetched with `git
   clone` over TLS; there is no signature or checksum verification beyond what
-  TLS and your git remote provide. Ignored entries (`.env`, `node_modules`,
-  `.git`) are pruned after the clone, so the template author's secrets do not
-  travel — but the code itself is trusted as much as you trust the repo.
+  TLS and your git remote provide. Secret-bearing files (`.env*`, `.npmrc`,
+  `.netrc`, `.git-credentials`, `.envrc`, `.vercel`, and the like) are pruned
+  after the clone at any depth, so the template author's secrets do not travel —
+  but the code itself is trusted as much as you trust the repo.
 - **Rollback is best-effort at the directory level.** A failure after the copy
   removes the destination only when it did not exist beforehand. A directory
   created by another process *during* the clone would be caught in that cleanup.

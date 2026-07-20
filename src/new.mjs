@@ -10,6 +10,7 @@
 // The free, public top-of-funnel starter. Cloning this is the zero-arg path.
 export const DEFAULT_TEMPLATE = 'https://github.com/mateuszingano/nextjs-supabase-starter.git';
 
+import { redactUrlCredentials } from './redact.mjs';
 import {
   cpSync,
   existsSync,
@@ -22,20 +23,41 @@ import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 // Never carry build artifacts, deps, or local secrets into a new project.
-const IGNORE = new Set([
-  'node_modules',
-  '.next',
-  '.git',
-  'coverage',
-  'test-results',
-  '.env',
-  '.env.local',
-  '.env.test',
-  'tsconfig.tsbuildinfo',
+//
+// This was an exact-match list of three `.env` spellings, which is a losing
+// game: `.env.production`, `.env.staging` and `.env.development` were not on it
+// and travelled, and neither was `.npmrc` — the one that hurts most, because it
+// holds an npm auth token and lives in the repo root of anyone who publishes
+// packages. The README promises "the template author's secrets do not travel",
+// so the rule has to be a CLASS of file, not a list of the ones we remembered.
+const IGNORE = new Set(['node_modules', '.next', '.git', 'coverage', 'test-results', 'tsconfig.tsbuildinfo']);
+
+// Anything starting with these is a secret-bearing dotfile by convention.
+const IGNORE_PREFIX = ['.env'];
+
+// Credential files that carry no common prefix. Each one holds a live token.
+const IGNORE_EXACT_SECRETS = new Set([
+  '.npmrc',        // npm auth token
+  '.yarnrc.yml',   // may carry npmAuthToken
+  '.netrc',
+  '.git-credentials',
+  '.envrc',        // direnv — arbitrary exports, routinely secrets
+  '.vercel',       // project + org ids linked to the author's account
+  '.aws',
+  '.terraform',
+  '.terraformrc',
 ]);
 
-/** Pure: should this top-level entry be skipped when scaffolding? */
+// The ONE .env-prefixed file that must survive: the template's committed
+// placeholder file, which `finalize` copies to `.env` in the new project. It is
+// meant to be public and the scaffold depends on it.
+const IGNORE_PREFIX_ALLOW = new Set(['.env.example', '.env.sample', '.env.template']);
+
+/** Pure: should this entry be skipped when scaffolding? Applies at any depth. */
 export function ignoreEntry(name) {
+  if (IGNORE_PREFIX_ALLOW.has(name)) return false;
+  if (IGNORE_PREFIX.some((p) => name === p || name.startsWith(`${p}.`))) return true;
+  if (IGNORE_EXACT_SECRETS.has(name)) return true;
   return IGNORE.has(name);
 }
 
@@ -153,7 +175,7 @@ export function scaffoldLocal({ name, from, dest }) {
  * Only cleans up when the destination did NOT exist beforehand: never delete
  * something we did not create.
  */
-function withRollback(dest, work) {
+export function withRollback(dest, work) {
   const preexisting = existsSync(dest);
   try {
     return work();
@@ -260,9 +282,13 @@ export function scaffoldRepo({ name, repo, dest, clone = defaultClone }) {
 // Real clone (injectable so tests don't hit the network). The `--` separator
 // ends git's option parsing, so `repo`/`dest` are always treated as operands,
 // never as flags — the arg-injection belt-and-suspenders alongside validateRepo.
-function defaultClone(repo, dest) {
+// `exec` is injectable so the redaction path can be tested without a real git
+// or network: the credential leak lived in this catch block, and the only test
+// that touched redaction exercised the pure function, never this call site — so
+// deleting the redaction here left the suite green.
+export function defaultClone(repo, dest, exec = (r, d) => execFileSync('git', ['clone', '--depth', '1', '--', r, d], { stdio: 'pipe' })) {
   try {
-    execFileSync('git', ['clone', '--depth', '1', '--', repo, dest], { stdio: 'pipe' });
+    exec(repo, dest);
   } catch (err) {
     const detail = err.stderr ? err.stderr.toString().trim() : err.message;
     // Redact credentials embedded in the URL. `https://user:TOKEN@host/repo` is
@@ -274,10 +300,11 @@ function defaultClone(repo, dest) {
   }
 }
 
-/** Replace the userinfo portion of a URL with ***, leaving everything else. */
-export function redactUrlCredentials(url) {
-  return String(url).replace(/\/\/[^/@\s]+@/, '//***@');
-}
+// Defined in ./redact.mjs so `doctor` can use the same redactor (it was printing
+// fetch errors with the URL raw). Imported AND re-exported: `defaultClone` above
+// calls it locally, and callers/tests already import it from this module — a
+// bare `export … from` would satisfy the second and break the first.
+export { redactUrlCredentials };
 
 /**
  * Top-level scaffold: resolves the source and dispatches. `dest` is absolute.
