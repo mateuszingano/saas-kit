@@ -1,6 +1,6 @@
 {
   "name": "supabase-saas-kit",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "The companion CLI for the SaaS boilerplate: scaffold a new project, check your Supabase connectivity, and generate RLS-safe migrations.",
   "type": "module",
   "bin": {
@@ -40,6 +40,6 @@
   "bugs": {
     "url": "https://github.com/mateuszingano/saas-kit/issues"
   },
-  "homepage": "https://github.com/mateuszingano/saas-kit#readme",
+  "homepage": "https://shipsealed.com",
   "license": "MIT"
 }
