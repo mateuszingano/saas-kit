@@ -3,6 +3,8 @@
 Four commands that make the boilerplate a one-liner to start, verify, grow, and
 ship — so the safe path (RLS on, env wired right, checks green) is the default.
 
+**The full multi-tenant boilerplate, guides and live demo:** [shipsealed.com](https://shipsealed.com) · [Supabase RLS guides](https://shipsealed.com/rls/)
+
 ```bash
 npm install -g supabase-saas-kit   # or prefix each command with: npx supabase-saas-kit
 # In CI, pin the version — `npx supabase-saas-kit` resolves to whatever is latest
